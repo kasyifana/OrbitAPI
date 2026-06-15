@@ -8,23 +8,28 @@ generator client {
 }
 
 model Collection {
-  id          String     @id @default(uuid())
-  userId      String     // User ID from Neon Auth
-  name        String
-  description String?
-  visibility  String     @default("private") // public, unlisted, private
-  createdAt   DateTime   @default(now())
-  endpoints   Endpoint[]
+  id           String        @id @default(uuid())
+  userId       String        // User ID from Neon Auth
+  name         String
+  description  String?
+  visibility   String        @default("private") // public, unlisted, private
+  createdAt    DateTime      @default(now())
+  endpoints    Endpoint[]
+  environments Environment[]
+  defaultEnvId String?
 
   @@index([userId])
 }
 
 model Environment {
-  id        String   @id @default(uuid())
-  userId    String   // User ID from Neon Auth
-  name      String   // e.g. Development, Staging, Production
-  variables Json     // e.g. { "BASE_URL": "...", "TOKEN": "..." }
-  createdAt DateTime @default(now())
+  id           String      @id @default(uuid())
+  userId       String      // User ID from Neon Auth
+  name         String      // e.g. Development, Staging, Production
+  variables    Json        // e.g. { "BASE_URL": "...", "TOKEN": "..." }
+  scope        String      @default("global") // "global" | "local"
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime    @default(now())
 
   @@index([userId])
 }
@@ -44,6 +49,7 @@ model Endpoint {
   bodyContent    String?    // Body content template or example
   bodySchema     Json?      // Smart schema detection from body
   responseSchema Json?      // Smart schema detection from response
+  folder         String?    // Postman folder hierarchy (e.g. Auth/Login or Users)
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
   snapshots      Snapshot[]

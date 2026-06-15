@@ -42,6 +42,30 @@ export async function POST(req: NextRequest) {
         if (!reqHeaders.has('content-type') && !reqHeaders.has('Content-Type')) {
           reqHeaders.append('content-type', 'application/x-www-form-urlencoded');
         }
+      } else if (bodyType === 'form-data' || bodyType === 'formdata') {
+        const formData = new FormData();
+        try {
+          const fields = typeof body === 'string' ? JSON.parse(body) : body;
+          if (Array.isArray(fields)) {
+            fields.forEach(({ key, value }) => {
+              if (key) {
+                formData.append(key, value || '');
+              }
+            });
+          }
+        } catch (e) {
+          if (typeof body === 'string') {
+            body.split('&').forEach(pair => {
+              const [k, v] = pair.split('=');
+              if (k) {
+                formData.append(decodeURIComponent(k), decodeURIComponent(v || ''));
+              }
+            });
+          }
+        }
+        init.body = formData;
+        reqHeaders.delete('content-type');
+        reqHeaders.delete('Content-Type');
       } else {
         init.body = body;
       }

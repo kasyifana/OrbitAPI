@@ -32,78 +32,98 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Map Postman request items to Orbit Endpoint model structure
-      const endpointsToCreate = items.map((item: any) => {
-        const reqData = item.request;
-        if (!reqData) return null;
+      // Recursive helper to extract endpoints from Postman items (including folders)
+      const extractEndpoints = (postmanItems: any[], folderPath: string = ''): any[] => {
+        let list: any[] = [];
+        for (const item of postmanItems) {
+          if (item.request) {
+            // It's a request endpoint
+            const reqData = item.request;
+            
+            // Path parser
+            let path = '';
+            if (reqData.url) {
+              if (typeof reqData.url === 'string') {
+                try {
+                  path = new URL(reqData.url).pathname;
+                } catch (e) {
+                  path = reqData.url;
+                }
+              } else if (Array.isArray(reqData.url.path)) {
+                path = '/' + reqData.url.path.join('/');
+              } else if (reqData.url.raw) {
+                try {
+                  path = new URL(reqData.url.raw).pathname;
+                } catch (e) {
+                  path = reqData.url.raw;
+                }
+              }
+            }
 
-        // Path parser
-        let path = '';
-        if (reqData.url) {
-          if (typeof reqData.url === 'string') {
-            try {
-              path = new URL(reqData.url).pathname;
-            } catch (e) {
-              path = reqData.url;
+            // Headers list parser
+            const headersList = Array.isArray(reqData.header)
+              ? reqData.header.map((h: any) => ({
+                  key: h.key,
+                  value: h.value,
+                  description: h.description || '',
+                  required: true,
+                }))
+              : [];
+
+            // Query parameters list parser
+            const queryParamsList = reqData.url && Array.isArray(reqData.url.query)
+              ? reqData.url.query.map((q: any) => ({
+                  key: q.key,
+                  value: q.value,
+                  description: q.description || '',
+                  required: false,
+                }))
+              : [];
+
+            // Body content parser
+            let bodyType = 'none';
+            let bodyContent = null;
+            if (reqData.body) {
+              if (reqData.body.mode === 'raw') {
+                bodyType = 'json';
+                bodyContent = reqData.body.raw || null;
+              } else if (reqData.body.mode === 'urlencoded' && Array.isArray(reqData.body.urlencoded)) {
+                bodyType = 'urlencoded';
+                bodyContent = reqData.body.urlencoded
+                  .map((param: any) => `${encodeURIComponent(param.key)}=${encodeURIComponent(param.value)}`)
+                  .join('&');
+              }
             }
-          } else if (Array.isArray(reqData.url.path)) {
-            path = '/' + reqData.url.path.join('/');
-          } else if (reqData.url.raw) {
-            try {
-              path = new URL(reqData.url.raw).pathname;
-            } catch (e) {
-              path = reqData.url.raw;
-            }
+
+            list.push({
+              collectionId: collection.id,
+              name: item.name || 'Untitled Endpoint',
+              method: (reqData.method || 'GET').toUpperCase(),
+              path: path || '/',
+              description: reqData.description || null,
+              headers: headersList,
+              queryParams: queryParamsList,
+              bodyType,
+              bodyContent,
+              folder: folderPath || null,
+            });
+          } else if (Array.isArray(item.item)) {
+            // It's a folder! Recurse into it.
+            const subFolderPath = folderPath 
+              ? `${folderPath}/${item.name}` 
+              : item.name;
+            list.push(...extractEndpoints(item.item, subFolderPath));
           }
         }
+        return list;
+      };
 
-        // Headers list parser
-        const headersList = Array.isArray(reqData.header)
-          ? reqData.header.map((h: any) => ({
-              key: h.key,
-              value: h.value,
-              description: h.description || '',
-              required: true,
-            }))
-          : [];
-
-        // Query parameters list parser
-        const queryParamsList = reqData.url && Array.isArray(reqData.url.query)
-          ? reqData.url.query.map((q: any) => ({
-              key: q.key,
-              value: q.value,
-              description: q.description || '',
-              required: false,
-            }))
-          : [];
-
-        // Body content parser
-        let bodyType = 'none';
-        let bodyContent = null;
-        if (reqData.body) {
-          if (reqData.body.mode === 'raw') {
-            bodyType = 'json';
-            bodyContent = reqData.body.raw || null;
-          }
-        }
-
-        return {
-          collectionId: collection.id,
-          name: item.name || 'Untitled Endpoint',
-          method: (reqData.method || 'GET').toUpperCase(),
-          path: path || '/',
-          description: reqData.description || null,
-          headers: headersList,
-          queryParams: queryParamsList,
-          bodyType,
-          bodyContent,
-        };
-      }).filter(Boolean);
+      const endpointsToCreate = extractEndpoints(items);
 
       // Bulk create endpoints
       if (endpointsToCreate.length > 0) {
         await db.endpoint.createMany({
-          data: endpointsToCreate as any[],
+          data: endpointsToCreate,
         });
       }
 

@@ -6,7 +6,8 @@ import { computeLineDiff } from '@/lib/diff';
 import { 
   Activity, Layers, FileCode, Clock, Share2, Clipboard, Globe, 
   Trash2, ArrowLeft, CheckCircle2, ChevronRight, ChevronDown, 
-  Play, Settings, Edit, Save, AlertCircle, Loader2, Info, Plus, X
+  Play, Settings, Edit, Save, AlertCircle, Loader2, Info, Plus, X,
+  Pin
 } from 'lucide-react';
 
 interface EndpointDetailsClientProps {
@@ -19,6 +20,7 @@ interface EndpointDetailsClientProps {
     collectionId: string;
     collectionName: string;
     collectionVisibility: string;
+    collectionDefaultEnvId?: string | null;
     responseSchema: any;
     headers?: any;
     queryParams?: any;
@@ -42,6 +44,8 @@ interface EndpointDetailsClientProps {
     id: string;
     name: string;
     variables: Record<string, string>;
+    scope?: string;
+    collectionId?: string | null;
   }[];
 }
 
@@ -100,6 +104,7 @@ export default function EndpointDetailsClient({
   // Diff versions selection
   const [diffVerA, setDiffVerA] = useState<number>(snapshots[snapshots.length - 2]?.version || snapshots[0]?.version || 1);
   const [diffVerB, setDiffVerB] = useState<number>(snapshots[snapshots.length - 1]?.version || snapshots[0]?.version || 1);
+  const [showOnlyChanges, setShowOnlyChanges] = useState<boolean>(false);
 
   // Settings: renaming endpoint
   const [isEditing, setIsEditing] = useState(false);
@@ -131,11 +136,43 @@ export default function EndpointDetailsClient({
 
   // Test Runner States
   const [runnerTab, setRunnerTab] = useState<'params' | 'headers' | 'body'>('params');
-  const [selectedEnvId, setSelectedEnvId] = useState<string>('none');
+  const [selectedEnvId, setSelectedEnvId] = useState<string>(() => {
+    if (endpoint.collectionDefaultEnvId) return endpoint.collectionDefaultEnvId;
+    if (typeof window !== 'undefined') {
+      const stored = window.localStorage.getItem(`orbit_default_env_${endpoint.collectionId}`);
+      return stored || 'none';
+    }
+    return 'none';
+  });
   const [activeVariables, setActiveVariables] = useState<Record<string, string>>({});
+  const [defaultEnvId, setDefaultEnvId] = useState<string | null>(endpoint.collectionDefaultEnvId || null);
+
+  useEffect(() => {
+    setDefaultEnvId(endpoint.collectionDefaultEnvId || null);
+    if (endpoint.collectionDefaultEnvId) {
+      setSelectedEnvId(endpoint.collectionDefaultEnvId);
+    }
+  }, [endpoint.collectionDefaultEnvId]);
+
+  useEffect(() => {
+    if (selectedEnvId !== 'none' && !environments.some(e => e.id === selectedEnvId)) {
+      setSelectedEnvId('none');
+    }
+  }, [environments, selectedEnvId]);
+
+  const filteredEnvironments = environments.filter(
+    env => !env.scope || env.scope === 'global' || env.collectionId === endpoint.collectionId
+  );
 
   const [runnerUrl, setRunnerUrl] = useState(() => {
-    return `http://localhost:8000${endpoint.path}`;
+    if (endpoint.path.startsWith('http://') || endpoint.path.startsWith('https://')) {
+      return endpoint.path;
+    }
+    if (endpoint.path.includes('{{')) {
+      return endpoint.path;
+    }
+    // Default to {{BASE_URL}} prefix so environment can inject the host
+    return `{{BASE_URL}}${endpoint.path}`;
   });
 
   const [runnerHeaders, setRunnerHeaders] = useState<KeyValueRow[]>(() => {
@@ -171,6 +208,24 @@ export default function EndpointDetailsClient({
 
   const [runnerBodyType, setRunnerBodyType] = useState(endpoint.bodyType || 'none');
   const [runnerBody, setRunnerBody] = useState(endpoint.bodyContent || '');
+  const [runnerFormDataList, setRunnerFormDataList] = useState<KeyValueRow[]>(() => {
+    let list: KeyValueRow[] = [];
+    if (endpoint.bodyType === 'form-data' && endpoint.bodyContent) {
+      try {
+        const parsed = JSON.parse(endpoint.bodyContent);
+        if (Array.isArray(parsed)) {
+          list = parsed.map((row: any) => ({
+            key: row.key || '',
+            value: row.value || '',
+            enabled: true,
+            description: '',
+          }));
+        }
+      } catch (e) {}
+    }
+    list.push({ key: '', value: '', enabled: true, description: '' });
+    return list;
+  });
 
   const [runnerSending, setRunnerSending] = useState(false);
   const [runnerResponse, setRunnerResponse] = useState<any>(null);
@@ -186,7 +241,27 @@ export default function EndpointDetailsClient({
       setActiveVariables({});
     } else {
       const env = environments.find(e => e.id === selectedEnvId);
-      setActiveVariables(env ? env.variables : {});
+      const vars = env ? env.variables : {};
+      setActiveVariables(vars);
+
+      // Auto-apply the environment base URL to the runner URL
+      // Find the first variable whose value looks like a URL (http/https)
+      const baseUrlKey = Object.entries(vars).find(
+        ([, v]) => typeof v === 'string' && (v.startsWith('http://') || v.startsWith('https://'))
+      )?.[0];
+
+      if (baseUrlKey) {
+        setRunnerUrl(prev => {
+          // Replace any existing {{...}} prefix or http(s):// origin with the new env token
+          // Pattern: if current URL starts with {{ or http, swap the base part
+          const pathOnly = endpoint.path.startsWith('/') ? endpoint.path : `/${endpoint.path}`;
+          if (prev.startsWith('{{') || prev.startsWith('http://') || prev.startsWith('https://')) {
+            // Check if the path portion is the same as endpoint.path
+            return `{{${baseUrlKey}}}${pathOnly}`;
+          }
+          return prev;
+        });
+      }
     }
   }, [selectedEnvId, environments]);
 
@@ -204,9 +279,9 @@ export default function EndpointDetailsClient({
     index: number,
     field: keyof KeyValueRow,
     value: any,
-    type: 'params' | 'headers'
+    type: 'params' | 'headers' | 'form-data'
   ) => {
-    const list = type === 'params' ? [...runnerParams] : [...runnerHeaders];
+    const list = type === 'params' ? [...runnerParams] : type === 'headers' ? [...runnerHeaders] : [...runnerFormDataList];
     list[index][field] = value as never;
 
     if (index === list.length - 1 && (list[index].key || list[index].value)) {
@@ -215,19 +290,23 @@ export default function EndpointDetailsClient({
 
     if (type === 'params') {
       setRunnerParams(list);
-    } else {
+    } else if (type === 'headers') {
       setRunnerHeaders(list);
+    } else {
+      setRunnerFormDataList(list);
     }
   };
 
-  const removeRunnerRow = (index: number, type: 'params' | 'headers') => {
-    const list = type === 'params' ? [...runnerParams] : [...runnerHeaders];
+  const removeRunnerRow = (index: number, type: 'params' | 'headers' | 'form-data') => {
+    const list = type === 'params' ? [...runnerParams] : type === 'headers' ? [...runnerHeaders] : [...runnerFormDataList];
     if (list.length === 1) return;
     list.splice(index, 1);
     if (type === 'params') {
       setRunnerParams(list);
-    } else {
+    } else if (type === 'headers') {
       setRunnerHeaders(list);
+    } else {
+      setRunnerFormDataList(list);
     }
   };
 
@@ -278,7 +357,9 @@ export default function EndpointDetailsClient({
           method: endpoint.method,
           headers: reqHeaders,
           bodyType: runnerBodyType,
-          body: runnerBodyType !== 'none' ? resolve(runnerBody) : null,
+          body: runnerBodyType === 'form-data'
+            ? JSON.stringify(runnerFormDataList.filter(f => f.key && f.enabled).map(f => ({ key: resolve(f.key), value: resolve(f.value) })))
+            : (runnerBodyType !== 'none' ? resolve(runnerBody) : null),
         }),
       });
 
@@ -320,7 +401,9 @@ export default function EndpointDetailsClient({
           responseHeaders: runnerResponse.headers,
           responseBody: runnerResponse.body,
           requestHeaders: runnerHeaders.filter(h => h.key && h.enabled).map(h => ({ key: h.key, value: h.value })),
-          requestBody: runnerBodyType !== 'none' ? runnerBody : null,
+          requestBody: runnerBodyType === 'form-data'
+            ? JSON.stringify(runnerFormDataList.filter(f => f.key && f.enabled).map(f => ({ key: f.key, value: f.value })))
+            : (runnerBodyType !== 'none' ? runnerBody : null),
           requestParams: runnerParams.filter(p => p.key && p.enabled).map(p => ({ key: p.key, value: p.value })),
         }),
       });
@@ -382,12 +465,13 @@ export default function EndpointDetailsClient({
     }
   };
 
-  // Generate visual diff
-  const getDiffLines = () => {
+  // Generate visual diff (memoized for performance)
+  const diffLines = React.useMemo(() => {
+    if (activeTab !== 'diff' || snapshots.length < 2) return [];
     const textA = getPrettySnapshotBody(diffVerA);
     const textB = getPrettySnapshotBody(diffVerB);
     return computeLineDiff(textA, textB);
-  };
+  }, [activeTab, diffVerA, diffVerB, snapshots]);
 
   // Generate code snippet based on parameters
   const generateSnippet = () => {
@@ -641,44 +725,101 @@ export default function EndpointDetailsClient({
                   className="rounded border border-zinc-800 bg-zinc-955 px-2 py-0.5 text-xs text-zinc-300 focus:outline-none"
                 >
                   <option value="none">No Environment</option>
-                  {environments.map(env => (
-                    <option key={env.id} value={env.id}>{env.name}</option>
+                  {filteredEnvironments.map(env => (
+                    <option key={env.id} value={env.id}>
+                      {env.name} {env.scope === 'local' ? '(local)' : '(global)'}
+                    </option>
                   ))}
                 </select>
+
+                {selectedEnvId !== 'none' && (
+                  <button
+                    onClick={async () => {
+                      const newDefaultId = defaultEnvId === selectedEnvId ? null : selectedEnvId;
+                      try {
+                        // 1. Sync to local storage
+                        if (newDefaultId) {
+                          window.localStorage.setItem(`orbit_default_env_${endpoint.collectionId}`, selectedEnvId);
+                        } else {
+                          window.localStorage.removeItem(`orbit_default_env_${endpoint.collectionId}`);
+                        }
+                        
+                        // 2. Sync to neon database
+                        const res = await fetch(`/api/collections/${endpoint.collectionId}`, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ defaultEnvId: newDefaultId }),
+                        });
+                        
+                        if (!res.ok) {
+                          throw new Error('Failed to update DB');
+                        }
+                        
+                        setDefaultEnvId(newDefaultId);
+                      } catch (err) {
+                        console.error('Error setting default environment:', err);
+                        // Fallback: still toggle local UI state
+                        setDefaultEnvId(newDefaultId);
+                      }
+                    }}
+                    className={`p-1 rounded hover:bg-zinc-800/80 transition-all cursor-pointer ${
+                      defaultEnvId === selectedEnvId
+                        ? 'text-amber-400'
+                        : 'text-zinc-500 hover:text-zinc-300'
+                    }`}
+                    title={defaultEnvId === selectedEnvId ? "Remove default environment" : "Set as Default for this Collection"}
+                  >
+                    <Pin className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             </div>
 
             {/* HTTP Method and URL input */}
-            <div className="flex gap-2">
-              <span className={`flex items-center justify-center text-xs font-black px-3 py-2 rounded-lg border border-zinc-850 select-none bg-zinc-950 text-brand-400`}>
-                {endpoint.method}
-              </span>
-              
-              <input
-                type="text"
-                value={runnerUrl}
-                onChange={(e) => setRunnerUrl(e.target.value)}
-                placeholder="http://localhost:8000/api/v1/users"
-                className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white placeholder-zinc-800 focus:border-brand-500 focus:outline-none font-mono"
-              />
+            <div className="flex flex-col gap-1">
+              <div className="flex gap-2">
+                <span className={`flex items-center justify-center text-xs font-black px-3 py-2 rounded-lg border border-zinc-850 select-none bg-zinc-950 text-brand-400`}>
+                  {endpoint.method}
+                </span>
+                
+                <input
+                  type="text"
+                  value={runnerUrl}
+                  onChange={(e) => setRunnerUrl(e.target.value)}
+                  placeholder="http://localhost:8000/api/v1/users"
+                  className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white placeholder-zinc-800 focus:border-brand-500 focus:outline-none font-mono"
+                />
 
-              <button
-                onClick={handleRunnerSend}
-                disabled={runnerSending || !runnerUrl}
-                className="rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-500 disabled:opacity-50 flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                {runnerSending ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>Sending</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-3.5 w-3.5 fill-current" />
-                    <span>Send</span>
-                  </>
-                )}
-              </button>
+                <button
+                  onClick={handleRunnerSend}
+                  disabled={runnerSending || !runnerUrl}
+                  className="rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-500 disabled:opacity-50 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  {runnerSending ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Sending</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-3.5 w-3.5 fill-current" />
+                      <span>Send</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              {runnerUrl.includes('{{') && (
+                <div className="text-[10px] font-mono text-zinc-550 flex items-center gap-1.5 mt-0.5 ml-1 select-all">
+                  <Globe className="h-3 w-3 text-brand-500 shrink-0 animate-pulse" />
+                  <span>Resolved URL:</span>
+                  <span className={resolve(runnerUrl).includes('{{') ? 'text-amber-400 font-semibold' : 'text-emerald-400 font-semibold'}>
+                    {resolve(runnerUrl)}
+                  </span>
+                  {resolve(runnerUrl).includes('{{') && (
+                    <span className="text-[9px] text-amber-500/80">(Select an environment or define variables to resolve)</span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Runner Config Tabs */}
@@ -712,48 +853,86 @@ export default function EndpointDetailsClient({
                   <div className="col-span-2">Description</div>
                   <div className="col-span-1"></div>
                 </div>
-                <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
-                  {runnerParams.map((p, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                      <div className="col-span-1 flex justify-center">
-                        <input 
-                          type="checkbox" 
-                          checked={p.enabled} 
-                          onChange={(e) => handleRunnerGridChange(idx, 'enabled', e.target.checked, 'params')}
-                          className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
-                        />
+                <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+                  {runnerParams.map((p, idx) => {
+                    const resolvedKey = resolve(p.key);
+                    const resolvedVal = resolve(p.value);
+                    const keyHasVar = p.key.includes('{{');
+                    const valHasVar = p.value.includes('{{');
+                    return (
+                      <div key={idx} className="space-y-0.5">
+                        <div className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-1 flex justify-center">
+                            <input 
+                              type="checkbox" 
+                              checked={p.enabled} 
+                              onChange={(e) => handleRunnerGridChange(idx, 'enabled', e.target.checked, 'params')}
+                              className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
+                            />
+                          </div>
+                          <input 
+                            type="text" 
+                            value={p.key}
+                            onChange={(e) => handleRunnerGridChange(idx, 'key', e.target.value, 'params')}
+                            placeholder="key"
+                            className={`col-span-4 rounded border bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-800 focus:outline-none font-mono transition-colors ${
+                              keyHasVar 
+                                ? resolvedKey.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                                : 'border-zinc-800 focus:border-brand-500'
+                            }`}
+                          />
+                          <input 
+                            type="text" 
+                            value={p.value}
+                            onChange={(e) => handleRunnerGridChange(idx, 'value', e.target.value, 'params')}
+                            placeholder="value or {{VAR}}"
+                            className={`col-span-4 rounded border bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-800 focus:outline-none font-mono transition-colors ${
+                              valHasVar 
+                                ? resolvedVal.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                                : 'border-zinc-800 focus:border-brand-500'
+                            }`}
+                          />
+                          <input 
+                            type="text" 
+                            value={p.description}
+                            onChange={(e) => handleRunnerGridChange(idx, 'description', e.target.value, 'params')}
+                            placeholder="desc"
+                            className="col-span-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-800 focus:border-brand-500 focus:outline-none"
+                          />
+                          <div className="col-span-1 flex justify-center">
+                            <button 
+                              onClick={() => removeRunnerRow(idx, 'params')}
+                              className="text-zinc-650 hover:text-red-400 p-1 rounded transition-colors"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        {(keyHasVar || valHasVar) && (
+                          <div className="grid grid-cols-12 gap-2 pl-6">
+                            <div className="col-span-4">
+                              {keyHasVar && (
+                                <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                  resolvedKey.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                                }`}>
+                                  → {resolvedKey.includes('{{') ? 'unresolved' : resolvedKey}
+                                </span>
+                              )}
+                            </div>
+                            <div className="col-span-4">
+                              {valHasVar && (
+                                <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                  resolvedVal.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                                }`}>
+                                  → {resolvedVal.includes('{{') ? 'unresolved' : resolvedVal}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <input 
-                        type="text" 
-                        value={p.key}
-                        onChange={(e) => handleRunnerGridChange(idx, 'key', e.target.value, 'params')}
-                        placeholder="key"
-                        className="col-span-4 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-800 focus:border-brand-500 focus:outline-none font-mono"
-                      />
-                      <input 
-                        type="text" 
-                        value={p.value}
-                        onChange={(e) => handleRunnerGridChange(idx, 'value', e.target.value, 'params')}
-                        placeholder="value"
-                        className="col-span-4 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-800 focus:border-brand-500 focus:outline-none font-mono"
-                      />
-                      <input 
-                        type="text" 
-                        value={p.description}
-                        onChange={(e) => handleRunnerGridChange(idx, 'description', e.target.value, 'params')}
-                        placeholder="desc"
-                        className="col-span-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-800 focus:border-brand-500 focus:outline-none"
-                      />
-                      <div className="col-span-1 flex justify-center">
-                        <button 
-                          onClick={() => removeRunnerRow(idx, 'params')}
-                          className="text-zinc-650 hover:text-red-400 p-1 rounded transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -768,48 +947,86 @@ export default function EndpointDetailsClient({
                   <div className="col-span-2">Description</div>
                   <div className="col-span-1"></div>
                 </div>
-                <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
-                  {runnerHeaders.map((h, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                      <div className="col-span-1 flex justify-center">
-                        <input 
-                          type="checkbox" 
-                          checked={h.enabled} 
-                          onChange={(e) => handleRunnerGridChange(idx, 'enabled', e.target.checked, 'headers')}
-                          className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
-                        />
+                <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+                  {runnerHeaders.map((h, idx) => {
+                    const resolvedKey = resolve(h.key);
+                    const resolvedVal = resolve(h.value);
+                    const keyHasVar = h.key.includes('{{');
+                    const valHasVar = h.value.includes('{{');
+                    return (
+                      <div key={idx} className="space-y-0.5">
+                        <div className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-1 flex justify-center">
+                            <input 
+                              type="checkbox" 
+                              checked={h.enabled} 
+                              onChange={(e) => handleRunnerGridChange(idx, 'enabled', e.target.checked, 'headers')}
+                              className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
+                            />
+                          </div>
+                          <input 
+                            type="text" 
+                            value={h.key}
+                            onChange={(e) => handleRunnerGridChange(idx, 'key', e.target.value, 'headers')}
+                            placeholder="Authorization"
+                            className={`col-span-4 rounded border bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-850 focus:outline-none font-mono transition-colors ${
+                              keyHasVar 
+                                ? resolvedKey.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                                : 'border-zinc-800 focus:border-brand-500'
+                            }`}
+                          />
+                          <input 
+                            type="text" 
+                            value={h.value}
+                            onChange={(e) => handleRunnerGridChange(idx, 'value', e.target.value, 'headers')}
+                            placeholder="Bearer {{TOKEN}}"
+                            className={`col-span-4 rounded border bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-850 focus:outline-none font-mono transition-colors ${
+                              valHasVar 
+                                ? resolvedVal.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                                : 'border-zinc-800 focus:border-brand-500'
+                            }`}
+                          />
+                          <input 
+                            type="text" 
+                            value={h.description}
+                            onChange={(e) => handleRunnerGridChange(idx, 'description', e.target.value, 'headers')}
+                            placeholder="desc"
+                            className="col-span-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-850 focus:border-brand-500 focus:outline-none"
+                          />
+                          <div className="col-span-1 flex justify-center">
+                            <button 
+                              onClick={() => removeRunnerRow(idx, 'headers')}
+                              className="text-zinc-650 hover:text-red-400 p-1 rounded transition-colors"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        {(keyHasVar || valHasVar) && (
+                          <div className="grid grid-cols-12 gap-2 pl-6">
+                            <div className="col-span-4">
+                              {keyHasVar && (
+                                <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                  resolvedKey.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                                }`}>
+                                  → {resolvedKey.includes('{{') ? 'unresolved' : resolvedKey}
+                                </span>
+                              )}
+                            </div>
+                            <div className="col-span-4">
+                              {valHasVar && (
+                                <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                  resolvedVal.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                                }`}>
+                                  → {resolvedVal.includes('{{') ? 'unresolved' : resolvedVal}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <input 
-                        type="text" 
-                        value={h.key}
-                        onChange={(e) => handleRunnerGridChange(idx, 'key', e.target.value, 'headers')}
-                        placeholder="Accept"
-                        className="col-span-4 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-850 focus:border-brand-500 focus:outline-none font-mono"
-                      />
-                      <input 
-                        type="text" 
-                        value={h.value}
-                        onChange={(e) => handleRunnerGridChange(idx, 'value', e.target.value, 'headers')}
-                        placeholder="application/json"
-                        className="col-span-4 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-850 focus:border-brand-500 focus:outline-none font-mono"
-                      />
-                      <input 
-                        type="text" 
-                        value={h.description}
-                        onChange={(e) => handleRunnerGridChange(idx, 'description', e.target.value, 'headers')}
-                        placeholder="desc"
-                        className="col-span-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-[11px] text-white placeholder-zinc-850 focus:border-brand-500 focus:outline-none"
-                      />
-                      <div className="col-span-1 flex justify-center">
-                        <button 
-                          onClick={() => removeRunnerRow(idx, 'headers')}
-                          className="text-zinc-650 hover:text-red-400 p-1 rounded transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -826,18 +1043,124 @@ export default function EndpointDetailsClient({
                   >
                     <option value="none">none</option>
                     <option value="json">application/json</option>
+                    <option value="urlencoded">application/x-www-form-urlencoded</option>
+                    <option value="form-data">multipart/form-data</option>
                     <option value="text">text/plain</option>
                   </select>
                 </div>
 
-                {runnerBodyType !== 'none' && (
-                  <textarea
-                    value={runnerBody}
-                    onChange={(e) => setRunnerBody(e.target.value)}
-                    placeholder={runnerBodyType === 'json' ? '{\n  "uuid_kurikulum": "9c8d7e6f-..."\n}' : 'key=value'}
-                    rows={6}
-                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs font-mono text-white placeholder-zinc-850 focus:border-brand-500 focus:outline-none resize-y"
-                  />
+                {runnerBodyType === 'form-data' ? (
+                  <div className="flex flex-col space-y-3">
+                    <div className="grid grid-cols-12 gap-2 text-[9px] font-bold uppercase tracking-wider text-zinc-550 border-b border-zinc-900 pb-1.5 px-2">
+                      <div className="col-span-1"></div>
+                      <div className="col-span-5">Key</div>
+                      <div className="col-span-5">Value</div>
+                      <div className="col-span-1"></div>
+                    </div>
+                    <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+                      {runnerFormDataList.map((row, idx) => {
+                        const resolvedKey = resolve(row.key);
+                        const resolvedVal = resolve(row.value);
+                        const keyHasVar = row.key.includes('{{');
+                        const valHasVar = row.value.includes('{{');
+                        return (
+                          <div key={idx} className="space-y-0.5">
+                            <div className="grid grid-cols-12 gap-2 items-center">
+                              <div className="col-span-1 flex justify-center">
+                                <input 
+                                  type="checkbox" 
+                                  checked={row.enabled} 
+                                  onChange={(e) => handleRunnerGridChange(idx, 'enabled', e.target.checked, 'form-data')}
+                                  className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3 w-3"
+                                />
+                              </div>
+                              <input 
+                                type="text" 
+                                value={row.key}
+                                onChange={(e) => handleRunnerGridChange(idx, 'key', e.target.value, 'form-data')}
+                                placeholder="key"
+                                className={`col-span-5 rounded border bg-zinc-950/60 px-2 py-1 text-[11px] text-white placeholder-zinc-800 focus:outline-none font-mono transition-colors ${
+                                  keyHasVar 
+                                    ? resolvedKey.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                                    : 'border-zinc-800 focus:border-brand-500'
+                                }`}
+                              />
+                              <input 
+                                type="text" 
+                                value={row.value}
+                                onChange={(e) => handleRunnerGridChange(idx, 'value', e.target.value, 'form-data')}
+                                placeholder="value or {{VAR}}"
+                                className={`col-span-5 rounded border bg-zinc-950/60 px-2 py-1 text-[11px] text-white placeholder-zinc-800 focus:outline-none font-mono transition-colors ${
+                                  valHasVar 
+                                    ? resolvedVal.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                                    : 'border-zinc-800 focus:border-brand-500'
+                                }`}
+                              />
+                              <div className="col-span-1 flex justify-center">
+                                <button 
+                                  type="button"
+                                  onClick={() => removeRunnerRow(idx, 'form-data')}
+                                  className="text-zinc-650 hover:text-red-400 p-1 rounded transition-colors cursor-pointer"
+                                  title="Remove row"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                            {(keyHasVar || valHasVar) && (
+                              <div className="grid grid-cols-12 gap-2 pl-6">
+                                <div className="col-span-5">
+                                  {keyHasVar && (
+                                    <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                      resolvedKey.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                                    }`}>
+                                      → {resolvedKey.includes('{{') ? 'unresolved' : resolvedKey}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="col-span-5">
+                                  {valHasVar && (
+                                    <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                      resolvedVal.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                                    }`}>
+                                      → {resolvedVal.includes('{{') ? 'unresolved' : resolvedVal}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  runnerBodyType !== 'none' && (
+                    <div className="flex flex-col gap-1">
+                      <textarea
+                        value={runnerBody}
+                        onChange={(e) => setRunnerBody(e.target.value)}
+                        placeholder={runnerBodyType === 'json' ? '{\n  "uuid_kurikulum": "9c8d7e6f-..."\n}' : 'key=value'}
+                        rows={6}
+                        className={`w-full rounded-lg border bg-zinc-950/80 p-3 text-xs font-mono text-white placeholder-zinc-850 focus:outline-none resize-y transition-colors ${
+                          runnerBody.includes('{{') 
+                            ? resolve(runnerBody).includes('{{') ? 'border-amber-500/40 focus:border-amber-400' : 'border-emerald-500/30 focus:border-emerald-400'
+                            : 'border-zinc-800 focus:border-brand-500'
+                        }`}
+                      />
+                      {runnerBody.includes('{{') && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                          <Globe className="h-3 w-3 text-brand-400 shrink-0" />
+                          <span className="text-zinc-500">Body preview:</span>
+                          <span className={`truncate ${
+                            resolve(runnerBody).includes('{{') ? 'text-amber-400' : 'text-emerald-400'
+                          }`}>
+                            {resolve(runnerBody).includes('{{') ? 'Some variables are unresolved — select an environment' : resolve(runnerBody).substring(0, 80) + (resolve(runnerBody).length > 80 ? '…' : '')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )
                 )}
               </div>
             )}
@@ -900,6 +1223,80 @@ export default function EndpointDetailsClient({
                     </button>
                   )}
                 </div>
+
+                {(() => {
+                  let runnerDetectedToken = '';
+                  if (runnerResponse && runnerResponse.body) {
+                    try {
+                      const parsed = JSON.parse(runnerResponse.body);
+                      const findToken = (obj: any): string => {
+                        if (!obj || typeof obj !== 'object') return '';
+                        const keys = ['token', 'access_token', 'accessToken', 'jwt', 'id_token', 'idToken'];
+                        for (const k of keys) {
+                          if (typeof obj[k] === 'string' && obj[k].length > 10) {
+                            return obj[k];
+                          }
+                        }
+                        if (obj.data) {
+                          const t = findToken(obj.data);
+                          if (t) return t;
+                        }
+                        for (const k of Object.keys(obj)) {
+                          if (obj[k] && typeof obj[k] === 'object') {
+                            const t = findToken(obj[k]);
+                            if (t) return t;
+                          }
+                        }
+                        return '';
+                      };
+                      runnerDetectedToken = findToken(parsed);
+                    } catch (e) {}
+                  }
+
+                  if (!runnerDetectedToken) return null;
+
+                  return (
+                    <div className="flex items-center justify-between rounded bg-brand-950/40 border border-brand-500/20 px-3 py-2 text-[11px] text-brand-300 font-sans">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-1.5 w-1.5 rounded-full bg-brand-500 animate-pulse" />
+                        {selectedEnvId === 'none' ? (
+                          <span>💡 <strong>Token detected in response!</strong> Select an environment above to save it.</span>
+                        ) : (
+                          <span>💡 <strong>Token detected in response!</strong> Save as <code>TOKEN</code> in active environment?</span>
+                        )}
+                      </div>
+                      {selectedEnvId !== 'none' && (
+                        <button
+                          onClick={async () => {
+                            const activeEnv = environments.find(e => e.id === selectedEnvId);
+                            if (activeEnv) {
+                              const updatedVars = {
+                                ...activeEnv.variables,
+                                TOKEN: runnerDetectedToken
+                              };
+                              try {
+                                const res = await fetch(`/api/environments/${selectedEnvId}`, {
+                                  method: 'PUT',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ variables: updatedVars })
+                                });
+                                if (res.ok) {
+                                  setActiveVariables(updatedVars);
+                                  alert('Token successfully saved as {{TOKEN}}!');
+                                }
+                              } catch (err) {
+                                console.error('Failed to save token', err);
+                              }
+                            }
+                          }}
+                          className="rounded bg-brand-600 px-2 py-0.5 font-bold text-white hover:bg-brand-500 transition-colors cursor-pointer text-[10px]"
+                        >
+                          Save
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {runnerSaveError && (
                   <div className="flex items-center gap-2 rounded bg-red-950/40 border border-red-500/20 p-2 text-[10px] text-red-400 font-sans">
@@ -1182,7 +1579,7 @@ export default function EndpointDetailsClient({
           
           {/* Diff Controls Header */}
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900/20 p-4">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Compare version</span>
               <select 
                 value={diffVerA} 
@@ -1205,6 +1602,18 @@ export default function EndpointDetailsClient({
                   <option key={s.id} value={s.version}>v{s.version}</option>
                 ))}
               </select>
+
+              <div className="h-4 w-px bg-zinc-800 mx-2 hidden sm:block" />
+
+              <label className="flex items-center gap-2 text-xs font-bold text-zinc-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showOnlyChanges}
+                  onChange={(e) => setShowOnlyChanges(e.target.checked)}
+                  className="rounded border-zinc-850 bg-zinc-950 text-brand-600 focus:ring-brand-500 focus:ring-offset-dark-950 focus:ring-1 h-3.5 w-3.5 transition-all"
+                />
+                <span>Show Only Changes</span>
+              </label>
             </div>
             
             <div className="text-xs font-semibold text-zinc-500 italic">
@@ -1222,25 +1631,68 @@ export default function EndpointDetailsClient({
           ) : (
             <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-5 overflow-auto max-h-128 font-mono text-xs">
               <pre className="space-y-0.5 leading-relaxed">
-                {getDiffLines().map((line, idx) => {
-                  let lineClass = 'text-zinc-300';
-                  let prefix = ' ';
-                  if (line.type === 'added') {
-                    lineClass = 'text-emerald-400 bg-emerald-950/20 block border-l-2 border-emerald-500 pl-1.5';
-                    prefix = '+';
-                  } else if (line.type === 'removed') {
-                    lineClass = 'text-red-400 bg-red-950/25 block border-l-2 border-red-500 pl-1.5';
-                    prefix = '-';
+                {(() => {
+                  const rendered: React.ReactNode[] = [];
+                  
+                  const renderLine = (line: any, idx: number) => {
+                    let lineClass = 'text-zinc-300';
+                    let prefix = ' ';
+                    if (line.type === 'added') {
+                      lineClass = 'text-emerald-400 bg-emerald-950/20 block border-l-2 border-emerald-500 pl-1.5 py-0.5';
+                      prefix = '+';
+                    } else if (line.type === 'removed') {
+                      lineClass = 'text-red-400 bg-red-950/25 block border-l-2 border-red-500 pl-1.5 py-0.5';
+                      prefix = '-';
+                    } else {
+                      lineClass = 'text-zinc-500 pl-2 block';
+                    }
+                    return (
+                      <code key={idx} className={`${lineClass} whitespace-pre`}>
+                        {prefix} {line.text}
+                      </code>
+                    );
+                  };
+
+                  if (showOnlyChanges) {
+                    let skippedCount = 0;
+                    diffLines.forEach((line, idx) => {
+                      if (line.type === 'unchanged') {
+                        skippedCount++;
+                      } else {
+                        if (skippedCount > 0) {
+                          rendered.push(
+                            <div key={`skip-${idx}`} className="text-zinc-600 italic py-1.5 border-y border-zinc-900/80 my-1 bg-zinc-900/10 pl-2 text-[10px] select-none">
+                              ... ({skippedCount} lines unchanged) ...
+                            </div>
+                          );
+                          skippedCount = 0;
+                        }
+                        rendered.push(renderLine(line, idx));
+                      }
+                    });
+                    if (skippedCount > 0) {
+                      rendered.push(
+                        <div key="skip-end" className="text-zinc-600 italic py-1.5 border-t border-zinc-900/80 mt-1 bg-zinc-900/10 pl-2 text-[10px] select-none">
+                          ... ({skippedCount} lines unchanged) ...
+                        </div>
+                      );
+                    }
                   } else {
-                    lineClass = 'text-zinc-400 pl-2';
+                    diffLines.forEach((line, idx) => {
+                      rendered.push(renderLine(line, idx));
+                    });
                   }
 
-                  return (
-                    <code key={idx} className={`${lineClass} whitespace-pre`}>
-                      {prefix} {line.text}
-                    </code>
-                  );
-                })}
+                  if (rendered.length === 0) {
+                    return (
+                      <div className="text-zinc-600 italic py-2 text-center select-none">
+                        No changes detected between these versions.
+                      </div>
+                    );
+                  }
+
+                  return rendered;
+                })()}
               </pre>
             </div>
           )}

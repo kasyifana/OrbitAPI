@@ -44,7 +44,9 @@ export default async function TesterPage({ searchParams }: PageProps) {
         id: true,
         name: true,
         variables: true,
-      },
+        scope: true,
+        collectionId: true,
+      } as any,
       orderBy: { createdAt: 'desc' },
     }),
   ]);
@@ -72,11 +74,12 @@ export default async function TesterPage({ searchParams }: PageProps) {
   return (
     <TesterClient
       collections={collections}
-      environments={environments.map(env => ({
+      environments={environments.map((env: any) => ({
         id: env.id,
         name: env.name,
-        // Ensure variables is safely typed as a Record<string, string>
         variables: (env.variables as Record<string, string>) || {},
+        scope: env.scope,
+        collectionId: env.collectionId,
       }))}
       initialRequest={initialRequest}
       preselectedColId={colId}

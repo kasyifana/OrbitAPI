@@ -32,7 +32,8 @@ export default async function EndpointDetailsPage({ params }: PageProps) {
           select: {
             name: true,
             visibility: true,
-          },
+            defaultEnvId: true,
+          } as any,
         },
         snapshots: {
           select: {
@@ -58,7 +59,9 @@ export default async function EndpointDetailsPage({ params }: PageProps) {
         id: true,
         name: true,
         variables: true,
-      },
+        scope: true,
+        collectionId: true,
+      } as any,
       orderBy: { createdAt: 'desc' },
     }),
   ]);
@@ -77,6 +80,7 @@ export default async function EndpointDetailsPage({ params }: PageProps) {
     collectionId: endpoint.collectionId,
     collectionName: endpoint.collection.name,
     collectionVisibility: endpoint.collection.visibility,
+    collectionDefaultEnvId: (endpoint.collection as any).defaultEnvId || null,
     responseSchema: endpoint.responseSchema,
     headers: endpoint.headers,
     queryParams: endpoint.queryParams,
@@ -102,10 +106,12 @@ export default async function EndpointDetailsPage({ params }: PageProps) {
     <EndpointDetailsClient 
       endpoint={formattedEndpoint as any}
       snapshots={formattedSnapshots}
-      environments={environments.map(env => ({
+      environments={environments.map((env: any) => ({
         id: env.id,
         name: env.name,
         variables: (env.variables as Record<string, string>) || {},
+        scope: env.scope,
+        collectionId: env.collectionId,
       }))}
     />
   );

@@ -10,9 +10,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, variables } = await req.json();
+        const { name, variables, scope, collectionId } = await req.json();
     if (!name || !name.trim()) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+    }
+
+    if (scope === 'local' && (!collectionId || !collectionId.trim())) {
+      return NextResponse.json({ error: 'Collection is required for local environments' }, { status: 400 });
     }
 
     const environment = await db.environment.create({
@@ -20,7 +24,9 @@ export async function POST(req: NextRequest) {
         userId: data.user.id,
         name: name.trim(),
         variables: variables || {},
-      },
+        scope: scope || 'global',
+        collectionId: scope === 'local' ? collectionId.trim() : null,
+      } as any,
     });
 
     return NextResponse.json(environment);

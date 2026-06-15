@@ -17,6 +17,8 @@ interface TesterClientProps {
     id: string;
     name: string;
     variables: Record<string, string>;
+    scope?: string;
+    collectionId?: string | null;
   }[];
   initialRequest?: {
     method: string;
@@ -326,6 +328,17 @@ export default function TesterClient({
   const [headersList, setHeadersList] = useState<KeyValueRow[]>([{ key: '', value: '', enabled: true, description: '' }]);
   const [bodyType, setBodyType] = useState(initialRequest?.bodyType || 'none');
   const [body, setBody] = useState(initialRequest?.body || '');
+  const [formDataList, setFormDataList] = useState<KeyValueRow[]>(() => {
+    if (initialRequest?.bodyType === 'form-data' && initialRequest?.body) {
+      try {
+        const parsed = JSON.parse(initialRequest.body);
+        if (Array.isArray(parsed)) {
+          return [...parsed.map(row => ({ key: row.key, value: row.value, enabled: true, description: '' })), { key: '', value: '', enabled: true, description: '' }];
+        }
+      } catch (e) {}
+    }
+    return [{ key: '', value: '', enabled: true, description: '' }];
+  });
 
   // Import states
   const [showImportModal, setShowImportModal] = useState(false);
@@ -378,6 +391,21 @@ export default function TesterClient({
       setBodyType(initialRequest.bodyType);
       setBody(initialRequest.body || '');
 
+      if (initialRequest.bodyType === 'form-data' && initialRequest.body) {
+        try {
+          const parsed = JSON.parse(initialRequest.body);
+          if (Array.isArray(parsed)) {
+            setFormDataList([...parsed.map(row => ({ key: row.key, value: row.value, enabled: true, description: '' })), { key: '', value: '', enabled: true, description: '' }]);
+          } else {
+            setFormDataList([{ key: '', value: '', enabled: true, description: '' }]);
+          }
+        } catch (e) {
+          setFormDataList([{ key: '', value: '', enabled: true, description: '' }]);
+        }
+      } else {
+        setFormDataList([{ key: '', value: '', enabled: true, description: '' }]);
+      }
+
       if (initialRequest.headers && initialRequest.headers.length > 0) {
         setHeadersList(
           initialRequest.headers.map(h => ({
@@ -405,9 +433,9 @@ export default function TesterClient({
     index: number,
     field: keyof KeyValueRow,
     value: any,
-    type: 'params' | 'headers'
+    type: 'params' | 'headers' | 'form-data'
   ) => {
-    const list = type === 'params' ? [...params] : [...headersList];
+    const list = type === 'params' ? [...params] : type === 'headers' ? [...headersList] : [...formDataList];
     list[index][field] = value as never;
 
     // Add empty row if last is touched
@@ -417,19 +445,23 @@ export default function TesterClient({
 
     if (type === 'params') {
       setParams(list);
-    } else {
+    } else if (type === 'headers') {
       setHeadersList(list);
+    } else {
+      setFormDataList(list);
     }
   };
 
-  const removeRow = (index: number, type: 'params' | 'headers') => {
-    const list = type === 'params' ? [...params] : [...headersList];
+  const removeRow = (index: number, type: 'params' | 'headers' | 'form-data') => {
+    const list = type === 'params' ? [...params] : type === 'headers' ? [...headersList] : [...formDataList];
     if (list.length === 1) return; // keep at least one
     list.splice(index, 1);
     if (type === 'params') {
       setParams(list);
-    } else {
+    } else if (type === 'headers') {
       setHeadersList(list);
+    } else {
+      setFormDataList(list);
     }
   };
 
@@ -447,6 +479,22 @@ export default function TesterClient({
     setBodyType(req.bodyType || 'none');
     setBody(req.body || '');
 
+    // For body formdata
+    if (req.bodyType === 'form-data' && req.body) {
+      try {
+        const parsed = JSON.parse(req.body);
+        if (Array.isArray(parsed)) {
+          setFormDataList([...parsed.map(row => ({ key: row.key, value: row.value, enabled: true, description: '' })), { key: '', value: '', enabled: true, description: '' }]);
+        } else {
+          setFormDataList([{ key: '', value: '', enabled: true, description: '' }]);
+        }
+      } catch (e) {
+        setFormDataList([{ key: '', value: '', enabled: true, description: '' }]);
+      }
+    } else {
+      setFormDataList([{ key: '', value: '', enabled: true, description: '' }]);
+    }
+
     // For headers list, add an empty row at the end to keep the auto-extend grid happy
     const cleanHeaders = req.headers && req.headers.length > 0 
       ? [...req.headers.map(h => ({ key: h.key, value: h.value, enabled: h.enabled !== false, description: h.description || '' }))]
@@ -458,7 +506,7 @@ export default function TesterClient({
     const cleanParams = req.queryParams && req.queryParams.length > 0
       ? [...req.queryParams.map(p => ({ key: p.key, value: p.value, enabled: p.enabled !== false, description: p.description || '' }))]
       : [];
-    cleanParams.push({ key: '', value: '', enabled: true, description: '' });
+      cleanParams.push({ key: '', value: '', enabled: true, description: '' });
     setParams(cleanParams);
 
     // Focus tab depending on request method and contents
@@ -592,7 +640,9 @@ export default function TesterClient({
           method,
           headers: reqHeaders,
           bodyType,
-          body: bodyType !== 'none' ? resolve(body) : null,
+          body: bodyType === 'form-data'
+            ? JSON.stringify(formDataList.filter(f => f.key && f.enabled).map(f => ({ key: resolve(f.key), value: resolve(f.value) })))
+            : (bodyType !== 'none' ? resolve(body) : null),
         }),
       });
 
@@ -667,7 +717,9 @@ export default function TesterClient({
           responseHeaders: response.headers,
           responseBody: response.body,
           requestHeaders: headersList.filter(h => h.key && h.enabled).map(h => ({ key: h.key, value: h.value })),
-          requestBody: bodyType !== 'none' ? body : null,
+          requestBody: bodyType === 'form-data'
+            ? JSON.stringify(formDataList.filter(f => f.key && f.enabled).map(f => ({ key: f.key, value: f.value })))
+            : (bodyType !== 'none' ? body : null),
           requestParams: params.filter(p => p.key && p.enabled).map(p => ({ key: p.key, value: p.value })),
         }),
       });
@@ -762,9 +814,17 @@ export default function TesterClient({
               className="rounded border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-zinc-300 focus:border-brand-500 focus:outline-none"
             >
               <option value="none">No Environment</option>
-              {environments.map(env => (
-                <option key={env.id} value={env.id}>{env.name}</option>
-              ))}
+              {environments.map(env => {
+                const colName = env.scope === 'local' 
+                  ? collections.find(c => c.id === env.collectionId)?.name 
+                  : null;
+                const label = colName 
+                  ? `${env.name} (local: ${colName})` 
+                  : `${env.name} (global)`;
+                return (
+                  <option key={env.id} value={env.id}>{label}</option>
+                );
+              })}
             </select>
           </div>
         </div>
@@ -777,44 +837,58 @@ export default function TesterClient({
         <div className="border-r border-zinc-800 flex flex-col h-full overflow-y-auto p-6 space-y-6">
           
           {/* Method and URL grid */}
-          <div className="flex gap-2">
-            <select
-              value={method}
-              onChange={(e) => setMethod(e.target.value)}
-              className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-bold text-white focus:border-brand-500 focus:outline-none"
-            >
-              <option value="GET">GET</option>
-              <option value="POST">POST</option>
-              <option value="PUT">PUT</option>
-              <option value="PATCH">PATCH</option>
-              <option value="DELETE">DELETE</option>
-            </select>
-            
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://api.example.com/users or {{BASE_URL}}/users"
-              className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none font-mono"
-            />
+          <div className="flex flex-col gap-1">
+            <div className="flex gap-2">
+              <select
+                value={method}
+                onChange={(e) => setMethod(e.target.value)}
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-bold text-white focus:border-brand-500 focus:outline-none"
+              >
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="PATCH">PATCH</option>
+                <option value="DELETE">DELETE</option>
+              </select>
+              
+              <input
+                type="text"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://api.example.com/users or {{BASE_URL}}/users"
+                className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none font-mono"
+              />
 
-            <button
-              onClick={handleSend}
-              disabled={sending || !url}
-              className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-50 flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              {sending ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Sending</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4 fill-current" />
-                  <span>Send</span>
-                </>
-              )}
-            </button>
+              <button
+                onClick={handleSend}
+                disabled={sending || !url}
+                className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-50 flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                {sending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Sending</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 fill-current" />
+                    <span>Send</span>
+                  </>
+                )}
+              </button>
+            </div>
+            {url.includes('{{') && (
+              <div className="text-[11px] font-mono text-zinc-550 flex items-center gap-1.5 mt-1 ml-1 select-all">
+                <Globe className="h-3 w-3 text-brand-500 shrink-0 animate-pulse" />
+                <span>Resolved URL:</span>
+                <span className={resolve(url).includes('{{') ? 'text-amber-400 font-semibold' : 'text-emerald-400 font-semibold'}>
+                  {resolve(url)}
+                </span>
+                {resolve(url).includes('{{') && (
+                  <span className="text-[10px] text-amber-500/80">(Select an environment or define variables to resolve)</span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Config Tabs */}
@@ -848,48 +922,86 @@ export default function TesterClient({
                 <div className="col-span-2">Description</div>
                 <div className="col-span-1"></div>
               </div>
-              <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-                {params.map((p, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-1 flex justify-center">
-                      <input 
-                        type="checkbox" 
-                        checked={p.enabled} 
-                        onChange={(e) => handleGridChange(idx, 'enabled', e.target.checked, 'params')}
-                        className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
-                      />
+              <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
+                {params.map((p, idx) => {
+                  const resolvedKey = resolve(p.key);
+                  const resolvedVal = resolve(p.value);
+                  const keyHasVar = p.key.includes('{{');
+                  const valHasVar = p.value.includes('{{');
+                  return (
+                    <div key={idx} className="space-y-0.5">
+                      <div className="grid grid-cols-12 gap-2 items-center">
+                        <div className="col-span-1 flex justify-center">
+                          <input 
+                            type="checkbox" 
+                            checked={p.enabled} 
+                            onChange={(e) => handleGridChange(idx, 'enabled', e.target.checked, 'params')}
+                            className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
+                          />
+                        </div>
+                        <input 
+                          type="text" 
+                          value={p.key}
+                          onChange={(e) => handleGridChange(idx, 'key', e.target.value, 'params')}
+                          placeholder="key"
+                          className={`col-span-4 rounded border bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:outline-none font-mono transition-colors ${
+                            keyHasVar 
+                              ? resolvedKey.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                              : 'border-zinc-800 focus:border-brand-500'
+                          }`}
+                        />
+                        <input 
+                          type="text" 
+                          value={p.value}
+                          onChange={(e) => handleGridChange(idx, 'value', e.target.value, 'params')}
+                          placeholder="value or {{VAR}}"
+                          className={`col-span-4 rounded border bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:outline-none font-mono transition-colors ${
+                            valHasVar 
+                              ? resolvedVal.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                              : 'border-zinc-800 focus:border-brand-500'
+                          }`}
+                        />
+                        <input 
+                          type="text" 
+                          value={p.description}
+                          onChange={(e) => handleGridChange(idx, 'description', e.target.value, 'params')}
+                          placeholder="desc"
+                          className="col-span-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none"
+                        />
+                        <div className="col-span-1 flex justify-center">
+                          <button 
+                            onClick={() => removeRow(idx, 'params')}
+                            className="text-zinc-600 hover:text-red-400 p-1 rounded transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      {(keyHasVar || valHasVar) && (
+                        <div className="col-span-12 grid grid-cols-12 gap-2 pl-6">
+                          <div className="col-span-4">
+                            {keyHasVar && (
+                              <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                resolvedKey.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                              }`}>
+                                → {resolvedKey.includes('{{') ? 'unresolved' : resolvedKey}
+                              </span>
+                            )}
+                          </div>
+                          <div className="col-span-4">
+                            {valHasVar && (
+                              <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                resolvedVal.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                              }`}>
+                                → {resolvedVal.includes('{{') ? 'unresolved' : resolvedVal}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <input 
-                      type="text" 
-                      value={p.key}
-                      onChange={(e) => handleGridChange(idx, 'key', e.target.value, 'params')}
-                      placeholder="key"
-                      className="col-span-4 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none font-mono"
-                    />
-                    <input 
-                      type="text" 
-                      value={p.value}
-                      onChange={(e) => handleGridChange(idx, 'value', e.target.value, 'params')}
-                      placeholder="value"
-                      className="col-span-4 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none font-mono"
-                    />
-                    <input 
-                      type="text" 
-                      value={p.description}
-                      onChange={(e) => handleGridChange(idx, 'description', e.target.value, 'params')}
-                      placeholder="desc"
-                      className="col-span-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none"
-                    />
-                    <div className="col-span-1 flex justify-center">
-                      <button 
-                        onClick={() => removeRow(idx, 'params')}
-                        className="text-zinc-600 hover:text-red-400 p-1 rounded transition-colors"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -904,48 +1016,86 @@ export default function TesterClient({
                 <div className="col-span-2">Description</div>
                 <div className="col-span-1"></div>
               </div>
-              <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-                {headersList.map((h, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-1 flex justify-center">
-                      <input 
-                        type="checkbox" 
-                        checked={h.enabled} 
-                        onChange={(e) => handleGridChange(idx, 'enabled', e.target.checked, 'headers')}
-                        className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
-                      />
+              <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
+                {headersList.map((h, idx) => {
+                  const resolvedKey = resolve(h.key);
+                  const resolvedVal = resolve(h.value);
+                  const keyHasVar = h.key.includes('{{');
+                  const valHasVar = h.value.includes('{{');
+                  return (
+                    <div key={idx} className="space-y-0.5">
+                      <div className="grid grid-cols-12 gap-2 items-center">
+                        <div className="col-span-1 flex justify-center">
+                          <input 
+                            type="checkbox" 
+                            checked={h.enabled} 
+                            onChange={(e) => handleGridChange(idx, 'enabled', e.target.checked, 'headers')}
+                            className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
+                          />
+                        </div>
+                        <input 
+                          type="text" 
+                          value={h.key}
+                          onChange={(e) => handleGridChange(idx, 'key', e.target.value, 'headers')}
+                          placeholder="Authorization"
+                          className={`col-span-4 rounded border bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:outline-none font-mono transition-colors ${
+                            keyHasVar 
+                              ? resolvedKey.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                              : 'border-zinc-800 focus:border-brand-500'
+                          }`}
+                        />
+                        <input 
+                          type="text" 
+                          value={h.value}
+                          onChange={(e) => handleGridChange(idx, 'value', e.target.value, 'headers')}
+                          placeholder="Bearer {{TOKEN}}"
+                          className={`col-span-4 rounded border bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:outline-none font-mono transition-colors ${
+                            valHasVar 
+                              ? resolvedVal.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                              : 'border-zinc-800 focus:border-brand-500'
+                          }`}
+                        />
+                        <input 
+                          type="text" 
+                          value={h.description}
+                          onChange={(e) => handleGridChange(idx, 'description', e.target.value, 'headers')}
+                          placeholder="desc"
+                          className="col-span-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none"
+                        />
+                        <div className="col-span-1 flex justify-center">
+                          <button 
+                            onClick={() => removeRow(idx, 'headers')}
+                            className="text-zinc-600 hover:text-red-400 p-1 rounded transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      {(keyHasVar || valHasVar) && (
+                        <div className="grid grid-cols-12 gap-2 pl-6">
+                          <div className="col-span-4">
+                            {keyHasVar && (
+                              <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                resolvedKey.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                              }`}>
+                                → {resolvedKey.includes('{{') ? 'unresolved' : resolvedKey}
+                              </span>
+                            )}
+                          </div>
+                          <div className="col-span-4">
+                            {valHasVar && (
+                              <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                resolvedVal.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                              }`}>
+                                → {resolvedVal.includes('{{') ? 'unresolved' : resolvedVal}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <input 
-                      type="text" 
-                      value={h.key}
-                      onChange={(e) => handleGridChange(idx, 'key', e.target.value, 'headers')}
-                      placeholder="Authorization"
-                      className="col-span-4 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none font-mono"
-                    />
-                    <input 
-                      type="text" 
-                      value={h.value}
-                      onChange={(e) => handleGridChange(idx, 'value', e.target.value, 'headers')}
-                      placeholder="Bearer {{TOKEN}}"
-                      className="col-span-4 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none font-mono"
-                    />
-                    <input 
-                      type="text" 
-                      value={h.description}
-                      onChange={(e) => handleGridChange(idx, 'description', e.target.value, 'headers')}
-                      placeholder="desc"
-                      className="col-span-2 rounded border border-zinc-800 bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:border-brand-500 focus:outline-none"
-                    />
-                    <div className="col-span-1 flex justify-center">
-                      <button 
-                        onClick={() => removeRow(idx, 'headers')}
-                        className="text-zinc-600 hover:text-red-400 p-1 rounded transition-colors"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -955,7 +1105,7 @@ export default function TesterClient({
             <div className="space-y-4 flex flex-col flex-1">
               <div className="flex items-center gap-3">
                 <span className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Content Type:</span>
-                <select
+                 <select
                   value={bodyType}
                   onChange={(e) => setBodyType(e.target.value)}
                   className="rounded border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-300 focus:border-brand-500 focus:outline-none"
@@ -963,19 +1113,122 @@ export default function TesterClient({
                   <option value="none">none</option>
                   <option value="json">application/json</option>
                   <option value="urlencoded">application/x-www-form-urlencoded</option>
+                  <option value="form-data">multipart/form-data</option>
                   <option value="text">text/plain</option>
                 </select>
               </div>
 
-              {bodyType !== 'none' && (
-                <div className="flex-1 flex flex-col">
-                  <textarea
-                    value={body}
-                    onChange={(e) => setBody(e.target.value)}
-                    placeholder={bodyType === 'json' ? '{\n  "name": "Ali"\n}' : 'key=value&name=Ali'}
-                    className="w-full min-h-64 flex-1 rounded-lg border border-zinc-800 bg-zinc-950/80 p-4 text-xs font-mono text-white placeholder-zinc-800 focus:border-brand-500 focus:outline-none resize-y"
-                  />
+              {bodyType === 'form-data' ? (
+                <div className="flex-1 flex flex-col space-y-3">
+                  <div className="grid grid-cols-12 gap-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-900 pb-1.5 px-2">
+                    <div className="col-span-1"></div>
+                    <div className="col-span-5">Key</div>
+                    <div className="col-span-5">Value</div>
+                    <div className="col-span-1"></div>
+                  </div>
+                  <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
+                    {formDataList.map((row, idx) => {
+                      const resolvedKey = resolve(row.key);
+                      const resolvedVal = resolve(row.value);
+                      const keyHasVar = row.key.includes('{{');
+                      const valHasVar = row.value.includes('{{');
+                      return (
+                        <div key={idx} className="space-y-0.5">
+                          <div className="grid grid-cols-12 gap-2 items-center">
+                            <div className="col-span-1 flex justify-center">
+                              <input 
+                                type="checkbox" 
+                                checked={row.enabled} 
+                                onChange={(e) => handleGridChange(idx, 'enabled', e.target.checked, 'form-data')}
+                                className="rounded border-zinc-800 bg-zinc-950 text-brand-600 focus:ring-brand-500 h-3.5 w-3.5"
+                              />
+                            </div>
+                            <input 
+                              type="text" 
+                              value={row.key}
+                              onChange={(e) => handleGridChange(idx, 'key', e.target.value, 'form-data')}
+                              placeholder="key"
+                              className={`col-span-5 rounded border bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:outline-none font-mono transition-colors ${
+                                keyHasVar 
+                                  ? resolvedKey.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                                  : 'border-zinc-800 focus:border-brand-500'
+                              }`}
+                            />
+                            <input 
+                              type="text" 
+                              value={row.value}
+                              onChange={(e) => handleGridChange(idx, 'value', e.target.value, 'form-data')}
+                              placeholder="value or {{VAR}}"
+                              className={`col-span-5 rounded border bg-zinc-950/60 px-2 py-1.5 text-xs text-white placeholder-zinc-700 focus:outline-none font-mono transition-colors ${
+                                valHasVar 
+                                  ? resolvedVal.includes('{{') ? 'border-amber-500/50 focus:border-amber-400' : 'border-emerald-500/40 focus:border-emerald-400'
+                                  : 'border-zinc-800 focus:border-brand-500'
+                              }`}
+                            />
+                            <div className="col-span-1 flex justify-center">
+                              <button 
+                                type="button"
+                                onClick={() => removeRow(idx, 'form-data')}
+                                className="text-zinc-500 hover:text-red-400 p-1 rounded transition-colors cursor-pointer"
+                                title="Remove row"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          {(keyHasVar || valHasVar) && (
+                            <div className="grid grid-cols-12 gap-2 pl-6">
+                              <div className="col-span-5">
+                                {keyHasVar && (
+                                  <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                    resolvedKey.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                                  }`}>
+                                    → {resolvedKey.includes('{{') ? 'unresolved' : resolvedKey}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="col-span-5">
+                                {valHasVar && (
+                                  <span className={`inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                    resolvedVal.includes('{{') ? 'bg-amber-950/40 text-amber-400 border border-amber-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20'
+                                  }`}>
+                                    → {resolvedVal.includes('{{') ? 'unresolved' : resolvedVal}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
+              ) : (
+                bodyType !== 'none' && (
+                  <div className="flex-1 flex flex-col gap-1">
+                    <textarea
+                      value={body}
+                      onChange={(e) => setBody(e.target.value)}
+                      placeholder={bodyType === 'json' ? '{\n  "name": "Ali"\n}' : 'key=value&name=Ali'}
+                      className={`w-full min-h-64 flex-1 rounded-lg border bg-zinc-950/80 p-4 text-xs font-mono text-white placeholder-zinc-800 focus:outline-none resize-y transition-colors ${
+                        body.includes('{{') 
+                          ? resolve(body).includes('{{') ? 'border-amber-500/40 focus:border-amber-400' : 'border-emerald-500/30 focus:border-emerald-400'
+                          : 'border-zinc-800 focus:border-brand-500'
+                      }`}
+                    />
+                    {body.includes('{{') && (
+                      <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                        <Globe className="h-3 w-3 text-brand-400 shrink-0" />
+                        <span className="text-zinc-500">Body preview:</span>
+                        <span className={`truncate ${
+                          resolve(body).includes('{{') ? 'text-amber-400' : 'text-emerald-400'
+                        }`}>
+                          {resolve(body).includes('{{') ? 'Some variables are unresolved — select an environment' : resolve(body).substring(0, 80) + (resolve(body).length > 80 ? '…' : '')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )
               )}
             </div>
           )}
@@ -1037,6 +1290,80 @@ export default function TesterClient({
                   </button>
                 )}
               </div>
+
+              {(() => {
+                let detectedToken = '';
+                if (response && response.body) {
+                  try {
+                    const parsed = JSON.parse(response.body);
+                    const findToken = (obj: any): string => {
+                      if (!obj || typeof obj !== 'object') return '';
+                      const keys = ['token', 'access_token', 'accessToken', 'jwt', 'id_token', 'idToken'];
+                      for (const k of keys) {
+                        if (typeof obj[k] === 'string' && obj[k].length > 10) {
+                          return obj[k];
+                        }
+                      }
+                      if (obj.data) {
+                        const t = findToken(obj.data);
+                        if (t) return t;
+                      }
+                      for (const k of Object.keys(obj)) {
+                        if (obj[k] && typeof obj[k] === 'object') {
+                          const t = findToken(obj[k]);
+                          if (t) return t;
+                        }
+                      }
+                      return '';
+                    };
+                    detectedToken = findToken(parsed);
+                  } catch (e) {}
+                }
+
+                if (!detectedToken) return null;
+
+                return (
+                  <div className="flex items-center justify-between rounded bg-brand-950/40 border border-brand-500/20 px-3.5 py-2.5 text-xs text-brand-300">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-2 w-2 rounded-full bg-brand-500 animate-pulse" />
+                      {selectedEnvId === 'none' ? (
+                        <span>💡 <strong>Token detected in response!</strong> Select an environment at the top to save it.</span>
+                      ) : (
+                        <span>💡 <strong>Token detected in response!</strong> Save as <code>TOKEN</code> in active environment?</span>
+                      )}
+                    </div>
+                    {selectedEnvId !== 'none' && (
+                      <button
+                        onClick={async () => {
+                          const activeEnv = environments.find(e => e.id === selectedEnvId);
+                          if (activeEnv) {
+                            const updatedVars = {
+                              ...activeEnv.variables,
+                              TOKEN: detectedToken
+                            };
+                            try {
+                              const res = await fetch(`/api/environments/${selectedEnvId}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ variables: updatedVars })
+                              });
+                              if (res.ok) {
+                                setActiveVariables(updatedVars);
+                                alert('Token successfully saved as {{TOKEN}}!');
+                              }
+                            } catch (err) {
+                              console.error('Failed to save token', err);
+                            }
+                          }
+                        }}
+                        className="rounded bg-brand-600 px-2.5 py-1 font-bold text-white hover:bg-brand-500 transition-colors cursor-pointer shrink-0 ml-4"
+                      >
+                        Save
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Response Tabs */}
               <div className="border-b border-zinc-800/60 flex items-center justify-between">

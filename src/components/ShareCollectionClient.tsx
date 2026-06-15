@@ -11,6 +11,7 @@ interface ShareCollectionClientProps {
     id: string;
     name: string;
     description: string | null;
+    defaultEnvId?: string | null;
   };
   endpoints: {
     id: string;
@@ -28,6 +29,11 @@ interface ShareCollectionClientProps {
       responseBody: string;
       createdAt: string;
     }[];
+  }[];
+  environments?: {
+    id: string;
+    name: string;
+    variables: Record<string, string>;
   }[];
 }
 
@@ -61,11 +67,35 @@ function RenderSchemaNode({ name, node }: { name: string; node: any }) {
   );
 }
 
-export default function ShareCollectionClient({ collection, endpoints }: ShareCollectionClientProps) {
+export default function ShareCollectionClient({ collection, endpoints, environments = [] }: ShareCollectionClientProps) {
   // Expand/collapse state for each endpoint documentation
   const [expandedEps, setExpandedEps] = useState<Record<string, boolean>>(
     endpoints.reduce((acc, ep) => ({ ...acc, [ep.id]: true }), {})
   );
+
+  // Active environment state
+  const [selectedEnvId, setSelectedEnvId] = useState<string>(() => {
+    if (collection.defaultEnvId && environments.some(e => e.id === collection.defaultEnvId)) {
+      return collection.defaultEnvId;
+    }
+    // Default select first environment if available
+    return environments.length > 0 ? environments[0].id : 'none';
+  });
+
+  const activeVariables = React.useMemo(() => {
+    if (selectedEnvId === 'none') return {};
+    const env = environments.find(e => e.id === selectedEnvId);
+    return env ? env.variables : {};
+  }, [selectedEnvId, environments]);
+
+  // Resolves double-curly variables
+  const resolve = (text: string): string => {
+    if (!text) return '';
+    return text.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
+      const trimmed = key.trim();
+      return activeVariables[trimmed] !== undefined ? activeVariables[trimmed] : match;
+    });
+  };
 
   // Active sub-tab inside each endpoint: 'docs', 'snapshots', 'snippets'
   const [subTabs, setSubTabs] = useState<Record<string, 'docs' | 'snapshots' | 'snippets'>>(
@@ -124,7 +154,12 @@ export default function ShareCollectionClient({ collection, endpoints }: ShareCo
   };
 
   const generateSnippet = (ep: any, lang: string) => {
-    const fullUrl = `https://api.example.com${ep.path}`;
+    const resolvedPath = resolve(ep.path);
+    let fullUrl = resolvedPath;
+    if (!resolvedPath.startsWith('http://') && !resolvedPath.startsWith('https://')) {
+      fullUrl = `https://api.example.com${resolvedPath.startsWith('/') ? resolvedPath : '/' + resolvedPath}`;
+    }
+
     if (lang === 'curl') {
       return `curl -X ${ep.method} "${fullUrl}" \\\n  -H "Accept: application/json"`;
     }
@@ -164,15 +199,54 @@ export default function ShareCollectionClient({ collection, endpoints }: ShareCo
       <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10 space-y-8 animate-fade-in">
         
         {/* Collection Metadata Card */}
-        <div className="border-b border-zinc-900 pb-6 space-y-2.5">
-          <div className="flex items-center gap-2 text-xs font-semibold text-brand-400">
-            <Layers className="h-4 w-4" />
-            <span>API Collection Snapshot</span>
+        <div className="border-b border-zinc-900 pb-6 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-brand-400">
+              <Layers className="h-4 w-4" />
+              <span>API Collection Snapshot</span>
+            </div>
+            <h1 className="text-3xl font-extrabold text-white">{collection.name}</h1>
+            <p className="text-sm text-zinc-400 leading-relaxed max-w-2xl">
+              {collection.description || 'This API collection contains endpoint specification lists, response version snapshots, and interactive sandbox helpers.'}
+            </p>
           </div>
-          <h1 className="text-3xl font-extrabold text-white">{collection.name}</h1>
-          <p className="text-sm text-zinc-400 leading-relaxed max-w-2xl">
-            {collection.description || 'This API collection contains endpoint specification lists, response version snapshots, and interactive sandbox helpers.'}
-          </p>
+
+          {/* Environment Selector */}
+          {environments.length > 0 && (
+            <div className="flex flex-col gap-1.5 shrink-0 bg-zinc-900/50 border border-zinc-800 rounded-xl p-3.5 min-w-[220px]">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                <Globe className="h-3.5 w-3.5 text-zinc-400" />
+                <span>Select Environment</span>
+              </div>
+              <select
+                value={selectedEnvId}
+                onChange={(e) => setSelectedEnvId(e.target.value)}
+                className="w-full rounded border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-300 focus:outline-none focus:border-brand-500"
+              >
+                <option value="none">No Environment</option>
+                {environments.map(env => (
+                  <option key={env.id} value={env.id}>{env.name}</option>
+                ))}
+              </select>
+
+              {/* Show variables if selected */}
+              {selectedEnvId !== 'none' && (
+                <div className="mt-2 border-t border-zinc-850 pt-2 space-y-1">
+                  <span className="block text-[9px] font-bold text-zinc-500 uppercase">Available variables:</span>
+                  <div className="max-h-24 overflow-y-auto space-y-0.5 pr-1">
+                    {Object.entries(activeVariables).map(([k, v]) => (
+                      <div key={k} className="flex justify-between items-center text-[10px] font-mono gap-4">
+                        <span className="text-amber-400 font-semibold">{k}</span>
+                        <span className="text-zinc-400 truncate max-w-[120px] bg-zinc-950 px-1 py-0.5 rounded border border-zinc-900" title={v}>
+                          {v}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Endpoints Loop */}
@@ -210,7 +284,7 @@ export default function ShareCollectionClient({ collection, endpoints }: ShareCo
                       <span className={`text-[10px] font-black px-2 py-0.5 rounded border shrink-0 w-16 text-center ${methodColors[ep.method] || 'text-zinc-400 bg-zinc-800'}`}>
                         {ep.method}
                       </span>
-                      <span className="font-mono text-xs font-semibold text-zinc-400 truncate shrink-0 max-w-xs">{ep.path}</span>
+                      <span className="font-mono text-xs font-semibold text-zinc-400 truncate shrink-0 max-w-xs">{resolve(ep.path)}</span>
                       <span className="text-xs text-white truncate font-bold ml-2 hidden sm:inline">{ep.name}</span>
                     </div>
                     {isExpanded ? <ChevronDown className="h-4.5 w-4.5 text-zinc-500" /> : <ChevronRight className="h-4.5 w-4.5 text-zinc-500" />}

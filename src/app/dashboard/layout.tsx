@@ -32,7 +32,8 @@ export default async function DashboardLayout({ children }: DashboardLayoutProps
             name: true,
             method: true,
             path: true,
-          },
+            folder: true,
+          } as any,
           orderBy: { createdAt: 'asc' },
         },
       },
@@ -63,8 +64,14 @@ export default async function DashboardLayout({ children }: DashboardLayoutProps
           name: data.user.name,
           email: data.user.email,
         }}
-        collections={collections}
-        environments={environments}
+        collections={collections as any}
+        environments={environments.map((env: any) => ({
+          id: env.id,
+          name: env.name,
+          variables: (env.variables as Record<string, string>) || {},
+          scope: env.scope,
+          collectionId: env.collectionId,
+        }))}
         history={history.map(item => ({
           ...item,
           // Serialize dates for Client Component safety

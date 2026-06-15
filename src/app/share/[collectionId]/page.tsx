@@ -86,14 +86,38 @@ export default async function ShareCollectionPage({ params }: PageProps) {
     })),
   }));
 
+  // Fetch environments: either local to this collection, or the collection's default/pinned environment
+  const environments = await db.environment.findMany({
+    where: {
+      OR: [
+        { collectionId: collection.id },
+        { id: (collection as any).defaultEnvId || '' }
+      ]
+    } as any,
+    select: {
+      id: true,
+      name: true,
+      variables: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const formattedEnvironments = environments.map(env => ({
+    id: env.id,
+    name: env.name,
+    variables: (env.variables as Record<string, string>) || {},
+  }));
+
   return (
     <ShareCollectionClient
       collection={{
         id: collection.id,
         name: collection.name,
         description: collection.description,
+        defaultEnvId: (collection as any).defaultEnvId || null,
       }}
       endpoints={formattedEndpoints}
+      environments={formattedEnvironments}
     />
   );
 }
