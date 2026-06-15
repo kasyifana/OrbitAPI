@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // Scan all cookies for any key containing 'session-token' or 'session_token'
   const allCookies = request.cookies.getAll();
   const sessionCookie = allCookies.find(c => 
