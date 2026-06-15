@@ -1,0 +1,101 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Collection {
+  id          String     @id @default(uuid())
+  userId      String     // User ID from Neon Auth
+  name        String
+  description String?
+  visibility  String     @default("private") // public, unlisted, private
+  createdAt   DateTime   @default(now())
+  endpoints   Endpoint[]
+
+  @@index([userId])
+}
+
+model Environment {
+  id        String   @id @default(uuid())
+  userId    String   // User ID from Neon Auth
+  name      String   // e.g. Development, Staging, Production
+  variables Json     // e.g. { "BASE_URL": "...", "TOKEN": "..." }
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Endpoint {
+  id             String     @id @default(uuid())
+  collectionId   String
+  collection     Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  name           String
+  method         String     // GET, POST, PUT, PATCH, DELETE
+  path           String     // e.g. /users
+  description    String?
+  tags           String[]
+  headers        Json?      // Expected headers list: Array of { key, value, description, required }
+  queryParams    Json?      // Expected query params list: Array of { key, value, description, required }
+  bodyType       String     @default("json") // json, form-data, urlencoded, text, none
+  bodyContent    String?    // Body content template or example
+  bodySchema     Json?      // Smart schema detection from body
+  responseSchema Json?      // Smart schema detection from response
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  snapshots      Snapshot[]
+  examples       Example[]
+
+  @@index([collectionId])
+}
+
+model Snapshot {
+  id              String   @id @default(uuid())
+  endpointId      String
+  endpoint        Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  version         Int      // Auto-increment version number (1, 2, 3...)
+  statusCode      Int
+  responseTime    Float    // in ms
+  responseSize    Float    // in bytes
+  responseHeaders Json?
+  responseBody    String   // JSON string or raw text
+  requestHeaders  Json?
+  requestBody     String?
+  requestParams   Json?
+  createdAt       DateTime @default(now())
+
+  @@index([endpointId])
+}
+
+model Example {
+  id          String   @id @default(uuid())
+  endpointId  String
+  endpoint    Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  name        String
+  headers     Json?
+  queryParams Json?
+  requestBody String?
+  createdAt   DateTime @default(now())
+
+  @@index([endpointId])
+}
+
+model HistoryItem {
+  id             String   @id @default(uuid())
+  userId         String   // User ID from Neon Auth
+  method         String
+  url            String
+  headers        Json?
+  bodyType       String   @default("none")
+  body           String?
+  isFavorite     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  responseStatus Int?
+  responseTime   Float?
+  responseBody   String?
+
+  @@index([userId])
+}
