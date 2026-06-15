@@ -83,6 +83,7 @@ export default async function ShareCollectionPage({ params }: PageProps) {
     bodyType: ep.bodyType,
     bodyContent: ep.bodyContent,
     responseSchema: ep.responseSchema,
+    folder: ep.folder,
     snapshots: ep.snapshots.map(snap => ({
       id: snap.id,
       version: snap.version,
