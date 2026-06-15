@@ -19,6 +19,10 @@ interface ShareCollectionClientProps {
     method: string;
     path: string;
     description: string | null;
+    headers?: any;
+    queryParams?: any;
+    bodyType?: string;
+    bodyContent?: string | null;
     responseSchema: any;
     snapshots: {
       id: string;
@@ -27,6 +31,10 @@ interface ShareCollectionClientProps {
       responseTime: number;
       responseSize: number;
       responseBody: string;
+      requestHeaders?: any;
+      requestBody?: string | null;
+      requestParams?: any;
+      responseHeaders?: any;
       createdAt: string;
     }[];
   }[];
@@ -35,6 +43,17 @@ interface ShareCollectionClientProps {
     name: string;
     variables: Record<string, string>;
   }[];
+}
+
+function parseList(val: any) {
+  if (!val) return [];
+  try {
+    const parsed = typeof val === 'string' ? JSON.parse(val) : val;
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item: any) => item.key);
+    }
+  } catch (e) {}
+  return [];
 }
 
 function RenderSchemaNode({ name, node }: { name: string; node: any }) {
@@ -116,6 +135,11 @@ export default function ShareCollectionClient({ collection, endpoints, environme
   );
 
   const [copiedCodes, setCopiedCodes] = useState<Record<string, boolean>>({});
+
+  // Active sub-tab inside the snapshot preview per endpoint: 'body' | 'headers' | 'request'
+  const [snapSubTabs, setSnapSubTabs] = useState<Record<string, 'body' | 'headers' | 'request'>>(
+    endpoints.reduce((acc, ep) => ({ ...acc, [ep.id]: 'body' }), {})
+  );
 
   const toggleEndpoint = (id: string) => {
     setExpandedEps(prev => ({ ...prev, [id]: !prev[id] }));
@@ -324,16 +348,115 @@ export default function ShareCollectionClient({ collection, endpoints, environme
                         </div>
                       </div>
 
-                      {/* SUB TAB: RESPONSE SCHEMA */}
+                      {/* SUB TAB: API DOCUMENTATION */}
                       {activeSubTab === 'docs' && (
-                        <div className="space-y-3">
-                          {ep.responseSchema ? (
-                            <div className="rounded border border-zinc-850 bg-zinc-950 p-4 max-h-72 overflow-y-auto">
-                              <RenderSchemaNode name="response" node={ep.responseSchema} />
+                        <div className="space-y-6">
+                          {/* Overview / Description */}
+                          {ep.description && (
+                            <div className="space-y-2">
+                              <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Description</span>
+                              <p className="text-xs text-zinc-400 leading-relaxed border-l-2 border-zinc-800 pl-3">
+                                {ep.description}
+                              </p>
                             </div>
-                          ) : (
-                            <div className="text-xs italic text-zinc-600 p-2.5">No schema captured for this endpoint.</div>
                           )}
+
+                          {/* Headers Section */}
+                          {(() => {
+                            const headerList = parseList(ep.headers);
+                            if (headerList.length === 0) return null;
+                            return (
+                              <div className="space-y-2">
+                                <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Request Headers</span>
+                                <div className="rounded-xl border border-zinc-900 bg-zinc-950/40 overflow-hidden text-xs">
+                                  <table className="w-full border-collapse">
+                                    <thead>
+                                      <tr className="bg-zinc-950 border-b border-zinc-900 text-zinc-400 font-bold text-left">
+                                        <th className="p-3 font-semibold w-1/4">Header Key</th>
+                                        <th className="p-3 font-semibold w-1/4">Default Value</th>
+                                        <th className="p-3 font-semibold">Description</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-zinc-900">
+                                      {headerList.map((h: any, i: number) => (
+                                        <tr key={i} className="hover:bg-zinc-900/10">
+                                          <td className="p-3 font-mono text-zinc-300 font-bold select-all">{h.key}</td>
+                                          <td className="p-3 font-mono text-zinc-400 select-all">{h.value || '-'}</td>
+                                          <td className="p-3 text-zinc-400">{h.description || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Query Parameters Section */}
+                          {(() => {
+                            const paramList = parseList(ep.queryParams);
+                            if (paramList.length === 0) return null;
+                            return (
+                              <div className="space-y-2">
+                                <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Query Parameters</span>
+                                <div className="rounded-xl border border-zinc-900 bg-zinc-950/40 overflow-hidden text-xs">
+                                  <table className="w-full border-collapse">
+                                    <thead>
+                                      <tr className="bg-zinc-950 border-b border-zinc-900 text-zinc-400 font-bold text-left">
+                                        <th className="p-3 font-semibold w-1/4">Parameter Key</th>
+                                        <th className="p-3 font-semibold w-1/4">Example Value</th>
+                                        <th className="p-3 font-semibold">Description</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-zinc-900">
+                                      {paramList.map((p: any, i: number) => (
+                                        <tr key={i} className="hover:bg-zinc-900/10">
+                                          <td className="p-3 font-mono text-zinc-300 font-bold select-all">{p.key}</td>
+                                          <td className="p-3 font-mono text-zinc-400 select-all">{p.value || '-'}</td>
+                                          <td className="p-3 text-zinc-400">{p.description || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Request Body Section */}
+                          {ep.bodyType && ep.bodyType !== 'none' && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Request Body</span>
+                                <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-brand-400">
+                                  {ep.bodyType === 'json' ? 'application/json' : ep.bodyType === 'urlencoded' ? 'application/x-www-form-urlencoded' : ep.bodyType}
+                                </span>
+                              </div>
+                              {ep.bodyContent ? (
+                                <div className="rounded-xl border border-zinc-900 bg-zinc-950/50 p-4 font-mono text-xs overflow-auto max-h-60 leading-relaxed text-zinc-300">
+                                  <pre>{ep.bodyContent}</pre>
+                                </div>
+                              ) : (
+                                <div className="text-xs text-zinc-500 italic p-3 rounded-lg border border-zinc-900 bg-zinc-950/20">
+                                  Empty body template
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Response Schema Section */}
+                          <div className="space-y-2">
+                            <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Response Schema</span>
+                            {ep.responseSchema ? (
+                              <div className="rounded-xl border border-zinc-900 bg-zinc-950/40 p-4 max-h-72 overflow-y-auto">
+                                <RenderSchemaNode name="response" node={ep.responseSchema} />
+                              </div>
+                            ) : (
+                              <div className="text-xs text-zinc-500 italic p-3 rounded-lg border border-zinc-900 bg-zinc-950/20">
+                                No response schema captured.
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
 
@@ -366,18 +489,130 @@ export default function ShareCollectionClient({ collection, endpoints, environme
                           <div className="md:col-span-3 space-y-3">
                             {activeSnapshot ? (
                               <div className="space-y-3">
-                                <div className="flex flex-wrap items-center gap-4 text-[10px] font-bold text-zinc-500 border-b border-zinc-900 pb-2">
-                                  <span>STATUS: <span className={activeSnapshot.statusCode < 400 ? 'text-emerald-400' : 'text-red-400'}>{activeSnapshot.statusCode}</span></span>
-                                  <span>TIME: <span className="text-zinc-400">{activeSnapshot.responseTime} ms</span></span>
-                                  <span>SIZE: <span className="text-zinc-400">{activeSnapshot.responseSize} B</span></span>
-                                  <span>SAVED: <span className="text-zinc-400">{new Date(activeSnapshot.createdAt).toLocaleDateString()}</span></span>
+                                <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+                                  <div className="flex flex-wrap items-center gap-4 text-[10px] font-bold text-zinc-500">
+                                    <span>STATUS: <span className={activeSnapshot.statusCode < 400 ? 'text-emerald-400' : 'text-red-400'}>{activeSnapshot.statusCode}</span></span>
+                                    <span>TIME: <span className="text-zinc-400">{activeSnapshot.responseTime} ms</span></span>
+                                    <span>SIZE: <span className="text-zinc-400">{activeSnapshot.responseSize} B</span></span>
+                                    <span>SAVED: <span className="text-zinc-400">{new Date(activeSnapshot.createdAt).toLocaleDateString()}</span></span>
+                                  </div>
+                                  
+                                  {/* Mini tabs */}
+                                  <div className="flex gap-2">
+                                    {(['body', 'headers', 'request'] as const).map(tab => (
+                                      <button
+                                        key={tab}
+                                        onClick={() => setSnapSubTabs(prev => ({ ...prev, [ep.id]: tab }))}
+                                        className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase border transition-all cursor-pointer ${
+                                          (snapSubTabs[ep.id] || 'body') === tab
+                                            ? 'bg-zinc-800 border-zinc-700 text-white shadow'
+                                            : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                                        }`}
+                                      >
+                                        {tab === 'body' ? 'Response Body' : tab === 'headers' ? 'Headers' : 'Request'}
+                                      </button>
+                                    ))}
+                                  </div>
                                 </div>
-                                <div className="rounded border border-zinc-850 bg-zinc-950 p-4 overflow-auto max-h-64 font-mono text-[11px] text-zinc-300">
-                                  <pre>{getPrettySnapshotBody(ep.id, selectedVer)}</pre>
-                                </div>
+
+                                {/* Body Tab */}
+                                {(snapSubTabs[ep.id] || 'body') === 'body' && (
+                                  <div className="rounded border border-zinc-850 bg-zinc-950 p-4 overflow-auto max-h-80 font-mono text-[11px] text-zinc-300">
+                                    <pre>{getPrettySnapshotBody(ep.id, selectedVer)}</pre>
+                                  </div>
+                                )}
+
+                                {/* Headers Tab */}
+                                {(snapSubTabs[ep.id] || 'body') === 'headers' && (
+                                  <div className="rounded border border-zinc-850 bg-zinc-950 p-4 overflow-auto max-h-80 text-xs">
+                                    {(() => {
+                                      const resHeaders = parseList(activeSnapshot.responseHeaders);
+                                      if (resHeaders.length === 0) {
+                                        return <div className="text-zinc-550 italic text-center py-2">No response headers captured.</div>;
+                                      }
+                                      return (
+                                        <div className="divide-y divide-zinc-900 font-mono">
+                                          {resHeaders.map((h: any, idx: number) => (
+                                            <div key={idx} className="flex justify-between py-1.5 gap-4">
+                                              <span className="text-zinc-400 font-bold select-all">{h.key}</span>
+                                              <span className="text-zinc-300 text-right break-all select-all">{h.value}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                )}
+
+                                {/* Request Tab */}
+                                {(snapSubTabs[ep.id] || 'body') === 'request' && (
+                                  <div className="rounded border border-zinc-850 bg-zinc-950 p-4 overflow-auto max-h-80 text-xs space-y-4">
+                                    <div className="font-mono text-zinc-400 border-b border-zinc-900 pb-2">
+                                      <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Target Endpoint</span>
+                                      <div className="flex gap-2 items-center mt-1">
+                                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-brand-400">
+                                          {ep.method}
+                                        </span>
+                                        <span className="text-zinc-300 font-bold select-all">{ep.path}</span>
+                                      </div>
+                                    </div>
+
+                                    {/* Captured Request Headers */}
+                                    {(() => {
+                                      const reqHeaders = parseList(activeSnapshot.requestHeaders);
+                                      if (reqHeaders.length === 0) return null;
+                                      return (
+                                        <div className="space-y-1">
+                                          <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Sent Headers</span>
+                                          <div className="divide-y divide-zinc-900 font-mono text-[11px] pl-2 border-l border-zinc-800">
+                                            {reqHeaders.map((h: any, idx: number) => (
+                                              <div key={idx} className="flex justify-between py-1 gap-4">
+                                                <span className="text-zinc-400 font-bold select-all">{h.key}</span>
+                                                <span className="text-zinc-300 text-right break-all select-all">{h.value}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+
+                                    {/* Captured Query Params */}
+                                    {(() => {
+                                      const reqParams = parseList(activeSnapshot.requestParams);
+                                      if (reqParams.length === 0) return null;
+                                      return (
+                                        <div className="space-y-1">
+                                          <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Query Parameters</span>
+                                          <div className="divide-y divide-zinc-900 font-mono text-[11px] pl-2 border-l border-zinc-850">
+                                            {reqParams.map((p: any, idx: number) => (
+                                              <div key={idx} className="flex justify-between py-1 gap-4">
+                                                <span className="text-zinc-400 font-bold select-all">{p.key}</span>
+                                                <span className="text-zinc-300 text-right break-all select-all">{p.value}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+
+                                    {/* Captured Request Body */}
+                                    {activeSnapshot.requestBody ? (
+                                      <div className="space-y-1">
+                                        <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Sent Request Body</span>
+                                        <div className="rounded bg-zinc-900/40 p-3 font-mono text-[11px] text-zinc-300 overflow-x-auto max-h-40">
+                                          <pre>{activeSnapshot.requestBody}</pre>
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {!activeSnapshot.requestHeaders && !activeSnapshot.requestParams && !activeSnapshot.requestBody && (
+                                      <div className="text-zinc-500 italic text-center py-2">No request metadata captured for this version.</div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             ) : (
-                              <div className="text-xs text-zinc-600 italic py-2">Select a version snapshot to preview response.</div>
+                              <div className="text-xs text-zinc-650 italic py-2">Select a version snapshot to preview response.</div>
                             )}
                           </div>
                         </div>

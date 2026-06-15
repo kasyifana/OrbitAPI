@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
+  // Allow self-signed certificates for dev testing (similar to Postman)
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  
   try {
     const { url, method, headers, body, bodyType } = await req.json();
 

@@ -52,45 +52,53 @@ function LoginForm() {
     setError('');
     
     let targetEmail = '';
-    let targetPassword = 'password123';
+    let targetPassword = 'OrbitPass123!';
     let targetName = '';
 
     if (role === 'admin') {
-      targetEmail = 'admin-30be3215@orbitapi.com';
+      targetEmail = 'admin-30be3215-v4@orbitapi.com';
       targetName = 'Admin Developer';
     } else {
-      targetEmail = 'developer-30be3215@orbitapi.com';
+      targetEmail = 'developer-30be3215-v4@orbitapi.com';
       targetName = 'Vibe Developer';
     }
 
     try {
-      // Attempt to sign in
-      const { error: signInErr } = await authClient.signIn.email({
+      // 1. Attempt to sign in
+      console.log('Attempting quick sign-in for:', targetEmail);
+      await authClient.signIn.email({
         email: targetEmail,
         password: targetPassword,
       });
 
-      if (signInErr) {
-        // If user doesn't exist, register them first
-        const { error: signUpErr } = await authClient.signUp.email({
+      // If sign-in succeeds
+      router.push(callbackUrl);
+      router.refresh();
+    } catch (signInErr: any) {
+      console.warn('Initial quick sign-in failed, attempting registration:', signInErr);
+      
+      try {
+        // 2. If sign-in fails (user doesn't exist yet), try to register them
+        await authClient.signUp.email({
           email: targetEmail,
           password: targetPassword,
           name: targetName,
         });
 
-        if (signUpErr) {
-          setError(signUpErr.message || 'Quick login failed during registration');
-          setLoading(false);
-          return;
-        }
+        console.log('Quick registration succeeded, logging in...');
 
-        // signUp.email automatically logs the user in, so we do not need to call signIn again!
+        // 3. Sign in after successful registration
+        await authClient.signIn.email({
+          email: targetEmail,
+          password: targetPassword,
+        });
+
+        router.push(callbackUrl);
+        router.refresh();
+      } catch (signUpErr: any) {
+        console.error('Quick registration or sign-in failed:', signUpErr);
+        setError(`Quick login failed: ${signUpErr.message || 'Unknown error'}`);
       }
-
-      router.push(callbackUrl);
-      router.refresh();
-    } catch (err: any) {
-      setError(err.message || 'Quick login failed');
     } finally {
       setLoading(false);
     }

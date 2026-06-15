@@ -489,7 +489,10 @@ export default function EndpointDetailsClient({
   };
 
   const copyShareLink = () => {
-    const shareUrl = `${window.location.origin}/share/${endpoint.collectionId}`;
+    const origin = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+      ? window.location.origin 
+      : 'https://orbit-api-olive.vercel.app';
+    const shareUrl = `${origin}/share/${endpoint.collectionId}`;
     navigator.clipboard.writeText(shareUrl);
     setCopiedShare(true);
     setTimeout(() => setCopiedShare(false), 2000);
