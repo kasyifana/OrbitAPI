@@ -71,8 +71,8 @@ export default function RegisterPage() {
       <div className="w-full max-w-md space-y-8 animate-fade-in">
         {/* Header logo & slogan */}
         <div className="flex flex-col items-center text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 neon-glow text-white">
-            <Activity className="h-6 w-6" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-900 border border-zinc-800 p-1.5 shadow-lg">
+            <img src="/OrbitAPI.png" alt="Orbit API Logo" className="h-full w-full object-contain" />
           </div>
           <h1 className="mt-6 text-3xl font-extrabold tracking-tight text-white">
             Create an Account

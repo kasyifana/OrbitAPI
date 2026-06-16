@@ -517,9 +517,7 @@ export default function DashboardSidebar({ user, collections, environments, hist
       {/* Brand Header */}
       <div className="flex h-14 items-center justify-between border-b border-zinc-900 px-4">
         <Link href="/dashboard" className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded bg-brand-600 text-white font-bold">
-            <Activity className="h-4 w-4" />
-          </div>
+          <img src="/OrbitAPI.png" alt="Orbit API Logo" className="h-6 w-6 object-contain" />
           <span className="text-md font-bold tracking-tight text-white">Orbit API Dashboard</span>
         </Link>
       </div>

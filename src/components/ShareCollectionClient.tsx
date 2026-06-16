@@ -278,9 +278,7 @@ export default function ShareCollectionClient({ collection, endpoints, environme
       {/* Mobile Header Bar */}
       <header className="md:hidden sticky top-0 z-40 bg-zinc-950/80 border-b border-zinc-900 px-4 py-3 backdrop-blur-md flex items-center justify-between shrink-0 w-full">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded bg-brand-600 text-white font-bold neon-glow">
-            <Activity className="h-4 w-4" />
-          </div>
+          <img src="/OrbitAPI.png" alt="Orbit API Logo" className="h-6 w-6 object-contain" />
           <span className="text-sm font-extrabold text-white truncate max-w-[180px]">
             {collection.name}
           </span>
@@ -310,11 +308,9 @@ export default function ShareCollectionClient({ collection, endpoints, environme
         {/* Brand Header */}
         <div className="flex h-14 items-center justify-between border-b border-zinc-900 px-4 shrink-0">
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded bg-brand-600 text-white font-bold animate-pulse">
-              <Activity className="h-4 w-4" />
-            </div>
+            <img src="/OrbitAPI.png" alt="Orbit API Logo" className="h-6 w-6 object-contain animate-pulse" />
             <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide leading-none">Shared via</span>
+              <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wide leading-none">Shared via</span>
               <span className="text-xs font-extrabold tracking-tight text-white leading-none mt-1">Orbit API Docs</span>
             </div>
           </div>
